@@ -1,0 +1,60 @@
+# switch user to root
+su
+
+# create hive directories
+hadoop fs -mkdir -p /user/hive/warehouse
+hadoop fs -chmod 1777 /user/hive/warehouse
+
+# install hive
+yum install mapr-hive mapr-hivemetastore mapr-hiveserver2 -y
+
+# reconfigure mapr services to include hive
+/opt/mapr/server/configure.sh -R
+
+# validate that the hivemeta and hiverserver2 services are running
+maprcli node list
+
+# switch user to user01 and perform the rest of the lab as the user01 user
+su - user01
+
+# copy the receipts.txt file into the sandbox
+scp -P 2222 receipts.txt user01@localhost:/user/user01
+
+# put receipts.txt into /user/user01/hive directory
+mkdir /user/user01/hive
+mv /user/user01/receipts.txt /user/user01/hive 
+
+# launch hive command
+cd /user/user01/hive
+hive
+
+hive> CREATE TABLE receipts_table(year INT, income INT, expenses INT, delta INT, a INT, b INT, c INT, d STRING, e STRING, f STRING) ROW FORMAT DELIMITED FIELDS TERMINATED BY ' ';
+ 
+hive> LOAD DATA LOCAL INPATH '/user/user01/hive/receipts.txt' INTO TABLE receipts_table;
+ 
+hive> DESCRIBE receipts_table;
+
+hive> select * from receipts_table;
+ 
+ 
+hive> SELECT a.year,a.delta FROM receipts_table a LEFT SEMI JOIN
+    (SELECT max(delta) maxdelta FROM receipts_table)b ON (a.delta=b.maxdelta)
+    ;
+# you should get this as output
+#2000	236241
+
+ 
+hive> SELECT a.year,a.delta FROM receipts_table a LEFT SEMI JOIN
+    (SELECT MIN(delta) mindelta FROM receipts_table)b ON (a.delta=b.mindelta)
+    ;
+
+# you should get this as output:
+# 2009	-1412688
+
+ 
+hive> SELECT AVG(delta) FROM receipts_table;
+# you should get this as output:
+# -93862.91891891892
+
+
+hive> quit;

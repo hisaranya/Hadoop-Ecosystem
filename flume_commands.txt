@@ -1,0 +1,98 @@
+# setup for demo
+# switch user to root
+su
+yum install mapr-flume -y
+
+# give user01 permission to read /var/log/messages
+setfacl -m u:user01:r /var/log/messages
+
+# configure rsyslog 
+service rsyslog stop
+
+# edit syslog configuration (2 changes to make in file)
+vi /etc/rsyslog.conf
+# 1. uncomment following two lines in /etc/rsyslog.conf:
+#$ModLoad imtcp
+#$InputTCPServerRun 514
+
+# 2. add following line at the bottom of the file: (put a tab between first and second fields)
+*.*     @@0.0.0.0:13073
+
+
+# start rsyslog
+service rsyslog start
+
+# check TCP ports
+netstat -an | grep 514 (should see open sockets)
+netstat -an | grep 13073 (should NOT see any open sockets)
+
+# exit from the su command
+exit
+
+# perform the rest of the steps as the user01 user
+
+# create flume agent conf file
+cd /user/user01
+mkdir flume
+cd flume
+vi syslog-flume.conf 
+agent.sources=syslogsource-1
+agent.channels=fileChannel-1
+agent.sinks=MapRFS
+agent.sources.syslogsource-1.type=syslogtcp
+agent.sources.syslogsource-1.port=13073
+agent.sources.syslogsource-1.host=0.0.0.0
+agent.sources.syslogsource-1.channels=fileChannel-1
+agent.channels.fileChannel-1.type=file
+agent.channels.fileChannel-1.capacity=100000
+agent.channels.fileChannel-1.transactionCapacity=1000
+agent.sinks.MapRFS.channel=fileChannel-1
+agent.sinks.MapRFS.type=hdfs
+agent.sinks.MapRFS.hdfs.path=maprfs:///user/user01/flume/%Y/%m/%H/
+agent.sinks.MapRFS.hdfs.filePrefix=logdata-%Y-%m-%H-%M-%S
+agent.sinks.MapRFS.hdfs.file.Type=DataStream
+agent.sinks.MapRFS.hdfs.rollInterval=0
+agent.sinks.MapRFS.hdfs.rollSize=16384000
+agent.sinks.MapRFS.hdfs.rollCount=0
+agent.sinks.MapRFS.hdfs.batchSize=1000
+agent.sinks.MapRFS.hdfs.txnEventMax=1000
+agent.sinks.MapRFS.serializer=avro_event
+agent.sinks.MapRFS.hdfs.threadsPoolSize=20
+
+# set FLUME_HOME env variable
+export FLUME_HOME=/opt/mapr/flume/flume-1.6.0/
+
+# start the flume agent in the background
+nohup $FLUME_HOME/bin/flume-ng agent -n agent -c conf -f /user/user01/flume/syslog-flume.conf > /tmp/flume.out 2>&1 &
+
+# check the /tmp/flume.out file to make sure there are no errors
+tail -f /tmp/flume.out
+
+# look for the following in the output file
+# . . . INFO source.SyslogTcpSource: Syslog TCP Source starting...
+
+# leave that “tail -f” window open and login again to your sandbox as user01
+ssh -p 2222 user01@localhost
+
+
+# now you should see port 13073 open
+netstat -an | grep 13073
+
+# generate a log message in syslog
+logger -p local0.notice "hello hadoop world"
+
+# look in your “tail -f” window for output from the flume agent 
+# fix any errors in your config if you see errors here
+
+# make sure the log message was generated (look for the "hello hadoop world" message)
+grep "hello hadoop world" /var/log/messages
+
+# now check that syslog messages are being routed to flume
+hadoop fs -ls -R /user/user01/flume
+
+# NOTE: in the following command, you'll need to replace the absolute path with one of the paths to any .tmp file from the output from the previous command 
+hadoop fs -cat /user/user01/flume/2016/03/16/logdata-2016-03-16-24-24.1457569468116.tmp
+
+# output should look something like this
+SEQ!org.apache.hadoop.io.LongWritable"org.apache.hadoop.io.BytesWritable)?_Q?k??MG??>K?S]???user01: hello hadoop world
+
